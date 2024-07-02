@@ -1,3 +1,9 @@
+# Jaql
+Jaql, pronounced "Jekyll", stands for Just Another Quantisation Library. It is a simple library that attempts to implement functionality similar to LLama.cpp. The quantised weights of the models are stored in `.jaql` files.
+
+
+
+# Notes
 it seems there is no reason to use an a-symmetric interval for the quantised numbers, as this does not prevent "squishing."
 at the same time, to save computation you can choose a symmetric interval for the non-quantised numbers. however, if their
 distribution is highly imbalanced, you will loose a lot of precision. so in these cases it is either better to use chunking,
