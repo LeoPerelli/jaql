@@ -60,11 +60,9 @@ def quantise_tensor_flat(t, chunk_size=512):
     return t_q, scales, locations
 
 
-def dequantise_tensor_flat(t_q, scales, locations):
+def dequantise_tensor_flat(t_q, scales, locations, chunk_size):
 
     n_chunks = len(scales)
-    chunk_size = int(len(t_q) / n_chunks)
-
     t = torch.zeros_like(t_q).type(torch.float32)
 
     for chunk_id in range(n_chunks):
@@ -74,3 +72,9 @@ def dequantise_tensor_flat(t_q, scales, locations):
         t[left:right] = scalar_dequantisation(t_q[left:right], scales[chunk_id], locations[chunk_id])
 
     return t
+
+
+t = torch.rand((10, 100))
+
+t_q, scales, locations = quantise_tensor_flat(t, chunk_size=64)
+t_approx = dequantise_tensor_flat(t_q, scales, locations, 64)
