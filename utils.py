@@ -42,8 +42,9 @@ def get_tensor_memory_size(t):
     return t.nelement() * t.element_size()
 
 
-def quantise_tensor_flat(t, chunk_size=512):
+def quantise_tensor(t, chunk_size=512):
 
+    shape = t.shape
     t_flat = t.flatten()
     t_q = torch.zeros_like(t_flat).type(torch.int8)
     n_chunks = math.ceil(len(t_flat) / chunk_size)
@@ -57,10 +58,15 @@ def quantise_tensor_flat(t, chunk_size=512):
 
         t_q[left:right], scales[chunk_id], locations[chunk_id] = scalar_quantisation(t_flat[left:right])
 
+    t_q = t_q.reshape(shape)
+
     return t_q, scales, locations
 
 
-def dequantise_tensor_flat(t_q, scales, locations, chunk_size):
+def dequantise_tensor(t_q, scales, locations, chunk_size):
+
+    shape = t_q.shape
+    t_q = t_q.flatten()
 
     n_chunks = len(scales)
     t = torch.zeros_like(t_q).type(torch.float32)
@@ -71,10 +77,12 @@ def dequantise_tensor_flat(t_q, scales, locations, chunk_size):
 
         t[left:right] = scalar_dequantisation(t_q[left:right], scales[chunk_id], locations[chunk_id])
 
+    t = t.reshape(shape)
     return t
 
 
 t = torch.rand((10, 100))
 
-t_q, scales, locations = quantise_tensor_flat(t, chunk_size=64)
-t_approx = dequantise_tensor_flat(t_q, scales, locations, 64)
+t_q, scales, locations = quantise_tensor(t, chunk_size=64)
+t_approx = dequantise_tensor(t_q, scales, locations, 64)
+compute_quantisation_mse(t, t_approx)
