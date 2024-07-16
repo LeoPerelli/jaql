@@ -20,3 +20,7 @@ k-means is linear both in n and in k. maybe the advantage is in the compression 
 higher dimensional int. so to save on memory, if they actually are similar, it is more convenient to do many small clusterings, 
 rather than one single big one. this is assuming that k*n is constant, but actually its bullshit because in the single 
 case i have both bigger n and bigger k. 
+
+# Todo
+- compute perplexity loss/changes when performing quantization
+- implement loading from the state dict to ensure that the model loading does not occupy non quantised model memory, before the quantisation (but also, who cares...)
