@@ -5,6 +5,7 @@ from tqdm import tqdm
 def scalar_quantisation(t, q_a=-127, q_b=127):
 
     assert len(t) > 1, "Bad idea to quantise a single element tensor"
+
     a = t.min()
     b = t.max()
 
@@ -94,8 +95,8 @@ def dequantise_tensor(t_q, scales, locations, chunk_size):
 
 def quantise_model(model, chunk_size):
 
-    parameter_mapping = {}
-    for parameter_name, p in tqdm(list(model.named_parameters()), desc="Quantising model layers"):
+    parameter_mapping = {}    
+    for parameter_name, p in tqdm(list(model.named_parameters()), desc = "Quantising model layers"):
         p_q, scales, locations = quantise_tensor(p.clone(), chunk_size)
         p.data.copy_(p_q)
         p.requires_grad = False
@@ -103,9 +104,30 @@ def quantise_model(model, chunk_size):
         parameter_mapping[parameter_name] = {'scales':scales, 'locations': locations, 'chunk_size': chunk_size}
 
     leaf_modules = get_leaf_modules(model)
+    update_parameter_mappings_with_tied_parameters(model, parameter_mapping)
     apply_quantisation_hooks(model, leaf_modules, parameter_mapping)
 
     return model, parameter_mapping
+
+def update_parameter_mappings_with_tied_parameters(model, parameter_mapping):
+
+    if model._tied_weights_keys == []:
+        return {}
+
+    pointers = {}
+    for module_name, module in model.named_modules():
+        if module_name == '':
+            continue
+        for parameter_name, p in module.named_parameters():
+            pointers[f'{module_name}.{parameter_name}'] = p.data_ptr()
+
+    for parameter_name in model._tied_weights_keys:
+        pointer = pointers[parameter_name]
+        for p_name, p_pointer in pointers.items():
+            if p_pointer == pointer:
+                # copy the parameter info for the tied parameter
+                parameter_mapping[parameter_name] = parameter_mapping[p_name]
+                break
 
 def get_leaf_modules(model):
     
