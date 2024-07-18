@@ -1,6 +1,11 @@
+from dataclasses import dataclass
+from evaluate import logging
+from tqdm import tqdm
+import evaluate
 import torch
 import math
-from tqdm import tqdm
+import numpy as np
+from torch.nn import CrossEntropyLoss
 
 def scalar_quantisation(t, q_a=-127, q_b=127):
 
@@ -59,7 +64,6 @@ def quantise_tensor(t, chunk_size=512):
 
     shape = t.shape
     t_flat = t.flatten()
-    t_q = torch.zeros_like(t_flat).type(torch.int8)
     n_chunks = math.ceil(len(t_flat) / chunk_size)
     scales = torch.zeros(n_chunks)
     locations = torch.zeros(n_chunks)
@@ -69,11 +73,12 @@ def quantise_tensor(t, chunk_size=512):
         left = chunk_id * chunk_size
         right = min(len(t_flat), (chunk_id + 1) * chunk_size)
 
-        t_q[left:right], scales[chunk_id], locations[chunk_id] = scalar_quantisation(t_flat[left:right])
+        t_flat[left:right], scales[chunk_id], locations[chunk_id] = scalar_quantisation(t_flat[left:right])
 
-    t_q = t_q.reshape(shape)
+    t_flat = t_flat.reshape(shape)
+    t_flat = t_flat.type(torch.int8)
 
-    return t_q, scales, locations
+    return t_flat, scales, locations
 
 
 def dequantise_tensor(t_q, scales, locations, chunk_size):
@@ -82,16 +87,16 @@ def dequantise_tensor(t_q, scales, locations, chunk_size):
     t_q = t_q.flatten()
 
     n_chunks = len(scales)
-    t = torch.zeros_like(t_q).type(torch.float32)
+    t_q = t_q.type(torch.float32)
 
     for chunk_id in range(n_chunks):
         left = chunk_id * chunk_size
         right = min(len(t_q), (chunk_id + 1) * chunk_size)
 
-        t[left:right] = scalar_dequantisation(t_q[left:right], scales[chunk_id], locations[chunk_id])
+        t_q[left:right] = scalar_dequantisation(t_q[left:right], scales[chunk_id], locations[chunk_id])
 
-    t = t.reshape(shape)
-    return t
+    t_q = t_q.reshape(shape)
+    return t_q
 
 def quantise_model(model, chunk_size):
 
@@ -157,6 +162,8 @@ def hook_factory(leaf_module_name, parameter_mapping):
             p_model.copy_(p)
             p_model.data = p_model.data.to(torch.int8)
 
+        del module.quantised_state
+
     return dequantise_hook, cleanup_hook
 
 def apply_quantisation_hooks(model,leaf_modules, parameter_mapping):
@@ -165,3 +172,102 @@ def apply_quantisation_hooks(model,leaf_modules, parameter_mapping):
         dequantise_hook, cleanup_hook = hook_factory(leaf_module, parameter_mapping)
         model.get_submodule(leaf_module).register_forward_pre_hook(dequantise_hook)
         model.get_submodule(leaf_module).register_forward_hook(cleanup_hook)
+
+class Perplexity(evaluate.Metric):
+    """An adaptation of HuggingFace's perplexity metric to support custom models."""
+    def _info(self):
+
+        @dataclass
+        class metric_info():
+            inputs_description = ""
+
+        info = metric_info()
+        return info
+
+    def _compute(
+        self, predictions, model, tokenizer, batch_size: int = 16, add_start_token: bool = True, device=None, max_length=None
+    ):
+
+        if device is not None:
+            assert device in ["gpu", "cpu", "cuda"], "device should be either gpu or cpu."
+            if device == "gpu":
+                device = "cuda"
+        else:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        model = model.to(device)
+
+        # if batch_size > 1 (which generally leads to padding being required), and
+        # if there is not an already assigned pad_token, assign an existing
+        # special token to also be the padding token
+        if tokenizer.pad_token is None and batch_size > 1:
+            existing_special_tokens = list(tokenizer.special_tokens_map_extended.values())
+            # check that the model already has at least one special token defined
+            assert (
+                len(existing_special_tokens) > 0
+            ), "If batch_size > 1, model must have at least one special token to use for padding. Please use a different model or set batch_size=1."
+            # assign one of the special tokens to also be the pad token
+            tokenizer.add_special_tokens({"pad_token": existing_special_tokens[0]})
+
+        if add_start_token and max_length:
+            # leave room for <BOS> token to be added:
+            assert (
+                tokenizer.bos_token is not None
+            ), "Input model must already have a BOS token if using add_start_token=True. Please use a different model, or set add_start_token=False"
+            max_tokenized_len = max_length - 1
+        else:
+            max_tokenized_len = max_length
+
+        encodings = tokenizer(
+            predictions,
+            add_special_tokens=False,
+            padding=True,
+            truncation=True if max_tokenized_len else False,
+            max_length=max_tokenized_len,
+            return_tensors="pt",
+            return_attention_mask=True,
+        ).to(device)
+
+        encoded_texts = encodings["input_ids"]
+        attn_masks = encodings["attention_mask"]
+
+        # check that each input is long enough:
+        if add_start_token:
+            assert torch.all(torch.ge(attn_masks.sum(1), 1)), "Each input text must be at least one token long."
+        else:
+            assert torch.all(
+                torch.ge(attn_masks.sum(1), 2)
+            ), "When add_start_token=False, each input text must be at least two tokens long. Run with add_start_token=True if inputting strings of only one token, and remove all empty input strings."
+
+        ppls = []
+        loss_fct = CrossEntropyLoss(reduction="none")
+
+        for start_index in logging.tqdm(range(0, len(encoded_texts), batch_size)):
+            end_index = min(start_index + batch_size, len(encoded_texts))
+            encoded_batch = encoded_texts[start_index:end_index]
+            attn_mask = attn_masks[start_index:end_index]
+
+            if add_start_token:
+                bos_tokens_tensor = torch.tensor([[tokenizer.bos_token_id]] * encoded_batch.size(dim=0)).to(device)
+                encoded_batch = torch.cat([bos_tokens_tensor, encoded_batch], dim=1)
+                attn_mask = torch.cat(
+                    [torch.ones(bos_tokens_tensor.size(), dtype=torch.int64).to(device), attn_mask], dim=1
+                )
+
+            labels = encoded_batch
+
+            with torch.no_grad():
+                out_logits = model(encoded_batch, attention_mask=attn_mask).logits
+
+            shift_logits = out_logits[..., :-1, :].contiguous()
+            shift_labels = labels[..., 1:].contiguous()
+            shift_attention_mask_batch = attn_mask[..., 1:].contiguous()
+
+            perplexity_batch = torch.exp(
+                (loss_fct(shift_logits.transpose(1, 2), shift_labels) * shift_attention_mask_batch).sum(1)
+                / shift_attention_mask_batch.sum(1)
+            )
+
+            ppls += perplexity_batch.tolist()
+
+        return {"perplexities": ppls, "mean_perplexity": np.mean(ppls)}
