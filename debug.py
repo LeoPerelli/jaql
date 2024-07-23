@@ -4,24 +4,37 @@ from utils import quantise_model,get_model_memory_size, compute_quantisation_mse
 from datasets import load_dataset
 import torch
 
-torch.cuda.memory._record_memory_history()
+
+def compute_perplexity(chunk_size = None):
+
+    tokenizer = AutoTokenizer.from_pretrained("openai-community/gpt2")
+    model = AutoModelForCausalLM.from_pretrained("openai-community/gpt2")
+
+    # model = model.half()
+
+    text = [t for t in load_dataset("wikitext", "wikitext-2-raw-v1", split="test")['text'] if len(t) > 30]
+
+    if chunk_size:
+        get_model_memory_size(model)
+        model, parameter_mapping = quantise_model(model, chunk_size=chunk_size)
+        get_model_memory_size(model, parameter_mapping)
 
 
+    perplexity = Perplexity()
+    p = perplexity._compute(text, model, tokenizer, batch_size=16)
 
-tokenizer = AutoTokenizer.from_pretrained("openai-community/gpt2")
-model = AutoModelForCausalLM.from_pretrained("openai-community/gpt2")
+    del model
+    torch.cuda.empty_cache()
+    return p['mean_perplexity']
 
-# model = model.half()
+# torch.cuda.memory._record_memory_history()
+# torch.cuda.memory._dump_snapshot("int8_1024_del_state_real.pickle")
 
-text = [t for t in load_dataset("wikitext", "wikitext-2-raw-v1", split="test")['text'] if len(t) > 30]
-get_model_memory_size(model)
-model, parameter_mapping = quantise_model(model, chunk_size=1024)
-get_model_memory_size(model, parameter_mapping)
+d = []
+for chunk in [32, None]: # 64, 128, 256, 1024]:
 
-text = text[0:2]
-perplexity = Perplexity()
-p = perplexity._compute(text, model, tokenizer)
-print(p['mean_perplexity'])
+    d.append(compute_perplexity(chunk_size=chunk))
+
+print(d)
 
 
-torch.cuda.memory._dump_snapshot("int8_1024_del_state.pickle")

@@ -6,6 +6,7 @@ import torch
 import math
 import numpy as np
 from torch.nn import CrossEntropyLoss
+import torch.nn.functional as F
 
 def scalar_quantisation(t, q_a=-127, q_b=127):
 
@@ -21,7 +22,7 @@ def scalar_quantisation(t, q_a=-127, q_b=127):
 
     x_q = (s * t + zero_point).type(torch.int8)
 
-    return x_q, s, zero_point
+    return x_q, float(s), float(zero_point)
 
 
 def scalar_dequantisation(t_q, s, zero_point):
@@ -67,6 +68,8 @@ def quantise_tensor(t, chunk_size=512):
     n_chunks = math.ceil(len(t_flat) / chunk_size)
     scales = torch.zeros(n_chunks)
     locations = torch.zeros(n_chunks)
+    # scales = list(range(n_chunks))
+    # locations = list(range(n_chunks))
 
     for chunk_id in range(n_chunks):
 
@@ -80,8 +83,7 @@ def quantise_tensor(t, chunk_size=512):
 
     return t_flat, scales, locations
 
-
-def dequantise_tensor(t_q, scales, locations, chunk_size):
+def dequantise_tensor_slow(t_q, scales, locations, chunk_size):
 
     shape = t_q.shape
     t_q = t_q.flatten()
@@ -98,11 +100,36 @@ def dequantise_tensor(t_q, scales, locations, chunk_size):
     t_q = t_q.reshape(shape)
     return t_q
 
+def dequantise_tensor(t_q, scales, locations, chunk_size):
+
+    shape = t_q.shape
+    t_q = t_q.flatten()
+    len_orig = len(t_q)
+
+    n_chunks = len(scales)
+    t_q = t_q.type(torch.float32)
+
+    pad_shape = (0, int(len_orig - n_chunks * chunk_size))
+    t_q = F.pad(t_q, pad_shape, "constant", 0.0)
+    t_q = t_q.reshape((n_chunks, chunk_size))
+
+    locations = locations.to('cuda')
+    scales = scales.to('cuda')
+
+    t_q = (t_q - locations[...,None])/scales[...,None]
+    t_q = t_q.flatten()
+
+    t_q = t_q[:len_orig]
+
+    t_q = t_q.reshape(shape)
+    return t_q
+
+
 def quantise_model(model, chunk_size):
 
     parameter_mapping = {}    
     for parameter_name, p in tqdm(list(model.named_parameters()), desc = "Quantising model layers"):
-        p_q, scales, locations = quantise_tensor(p.clone(), chunk_size)
+        p_q, scales, locations = quantise_tensor(p.detach().clone(), chunk_size)
         p.data.copy_(p_q)
         p.requires_grad = False
         p.data = p.data.to(torch.int8)
@@ -151,7 +178,7 @@ def hook_factory(leaf_module_name, parameter_mapping):
         for parameter_name in parameter_names:
             global_parameter_name = f'{leaf_module_name}.{parameter_name}'
             p = module.get_parameter(parameter_name)
-            module.quantised_state[parameter_name] = p.clone()
+            module.quantised_state[parameter_name] = p.detach().clone()
             p_approx = dequantise_tensor(p, parameter_mapping[global_parameter_name]['scales'], parameter_mapping[global_parameter_name]['locations'],parameter_mapping[global_parameter_name]['chunk_size'])
             p.data = p.data.to(torch.float32)
             p.copy_(p_approx)
@@ -162,7 +189,11 @@ def hook_factory(leaf_module_name, parameter_mapping):
             p_model.copy_(p)
             p_model.data = p_model.data.to(torch.int8)
 
+        for p in module.quantised_state.items():
+            del p
         del module.quantised_state
+
+        torch.cuda.empty_cache()
 
     return dequantise_hook, cleanup_hook
 
