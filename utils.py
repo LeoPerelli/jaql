@@ -88,7 +88,7 @@ def quantise_tensor(t, chunk_size=512,q_a=-127, q_b=127):
     n_chunks = math.ceil(len(t_flat) / chunk_size)
     len_orig = len(t_flat)
 
-    pad_shape = (0, int(len_orig - n_chunks * chunk_size))
+    pad_shape = (0, int(n_chunks * chunk_size - len_orig))
     t_flat = F.pad(t_flat, pad_shape, "constant", 0.0)
     t_flat = t_flat.reshape((n_chunks, chunk_size))
 
@@ -102,7 +102,7 @@ def quantise_tensor(t, chunk_size=512,q_a=-127, q_b=127):
 
     t_flat = t_flat * scales[...,None] + locations[...,None]
 
-    t_flat = t_flat[:len_orig]
+    t_flat = t_flat.flatten()[:len_orig]
     t_flat = t_flat.reshape(shape)
     t_flat = t_flat.type(torch.int8)
 
@@ -134,12 +134,12 @@ def dequantise_tensor(t_q, scales, locations, chunk_size):
     n_chunks = len(scales)
     t_q = t_q.type(torch.float32)
 
-    pad_shape = (0, int(len_orig - n_chunks * chunk_size))
+    pad_shape = (0, int(n_chunks * chunk_size - len_orig))
     t_q = F.pad(t_q, pad_shape, "constant", 0.0)
     t_q = t_q.reshape((n_chunks, chunk_size))
 
-    locations = locations.to('cuda')
-    scales = scales.to('cuda')
+    locations = locations.to(t_q.device)
+    scales = scales.to(t_q.device)
 
     t_q = (t_q - locations[...,None])/scales[...,None]
     t_q = t_q.flatten()
