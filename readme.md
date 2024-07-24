@@ -13,8 +13,14 @@ t_q = \text{convert}(t * scale + location)
 where the `convert` converts from a `float32` to `int8`, and the scale/location parameters are computed as:
 ```math
 scale = (t_{max} - t_{min})/(int8_{max} - int8_{min})
+```
+```math
 zero-point_q = (int8_{max} + int8_{min})/2
+```
+```math
 zero-point_t = (t_{max} + t_{min})/2
+```
+```math
 location = zero-point_q - scale * zero-point_t
 ```
 
