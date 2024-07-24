@@ -61,15 +61,13 @@ def get_model_memory_size(model, parameter_mappings=None):
     print(f"model size: {size_model} / bit | {size_model / 1e6:.2f} / MB")
 
 
-def quantise_tensor(t, chunk_size=512):
+def quantise_tensor_slow(t, chunk_size=512):
 
     shape = t.shape
     t_flat = t.flatten()
     n_chunks = math.ceil(len(t_flat) / chunk_size)
     scales = torch.zeros(n_chunks)
     locations = torch.zeros(n_chunks)
-    # scales = list(range(n_chunks))
-    # locations = list(range(n_chunks))
 
     for chunk_id in range(n_chunks):
 
@@ -78,6 +76,33 @@ def quantise_tensor(t, chunk_size=512):
 
         t_flat[left:right], scales[chunk_id], locations[chunk_id] = scalar_quantisation(t_flat[left:right])
 
+    t_flat = t_flat.reshape(shape)
+    t_flat = t_flat.type(torch.int8)
+
+    return t_flat, scales, locations
+
+def quantise_tensor(t, chunk_size=512,q_a=-127, q_b=127):
+
+    shape = t.shape
+    t_flat = t.flatten()
+    n_chunks = math.ceil(len(t_flat) / chunk_size)
+    len_orig = len(t_flat)
+
+    pad_shape = (0, int(len_orig - n_chunks * chunk_size))
+    t_flat = F.pad(t_flat, pad_shape, "constant", 0.0)
+    t_flat = t_flat.reshape((n_chunks, chunk_size))
+
+    mins = t_flat.min(axis=1).values
+    maxs = t_flat.max(axis=1).values
+
+    scales = (q_b - q_a) / (maxs - mins)
+    q_c = (q_a + q_b) / 2
+    c = (maxs + mins) / 2
+    locations = q_c - scales * c
+
+    t_flat = t_flat * scales[...,None] + locations[...,None]
+
+    t_flat = t_flat[:len_orig]
     t_flat = t_flat.reshape(shape)
     t_flat = t_flat.type(torch.int8)
 

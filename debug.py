@@ -3,6 +3,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 from utils import quantise_model,get_model_memory_size, compute_quantisation_mse, Perplexity
 from datasets import load_dataset
 import torch
+from tqdm import tqdm
 
 
 def compute_perplexity(chunk_size = None):
