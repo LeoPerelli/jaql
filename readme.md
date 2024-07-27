@@ -15,13 +15,13 @@ where the `convert` converts from a `float32` to `int8`, and the scale/location 
 scale = (t_{max} - t_{min})/(int8_{max} - int8_{min})
 ```
 ```math
-zero-point_q = (int8_{max} + int8_{min})/2
+zero_q = (int8_{max} + int8_{min})/2
 ```
 ```math
-zero-point_t = (t_{max} + t_{min})/2
+zero_t = (t_{max} + t_{min})/2
 ```
 ```math
-location = zero-point_q - scale * zero-point_t
+location = zero_q - scale * zero_t
 ```
 
 `Jaql` performs quantisation on chunks of tensor, to improve the performance. 
@@ -32,6 +32,7 @@ The chunk size is generally set to `32`, as in `LLama.cpp`.
 The inference speed is slightly slower (20%) with respect to a non-quantised model.
 I suspect this is mostly due to how weights are quantised, as PyTorch doesn't easily accept converting parameters of the state dict to `int8`.
 This required re-allocating substantially more tensors, which slows down the de-quantisation hooks.
+Some metrics from LLama quantisation types: https://www.reddit.com/r/LocalLLaMA/comments/142q5k5/updated_relative_comparison_of_ggml_quantization/.
 
 To evaluate the model degradation I follow `LLama.cpp` in computing perplexity change. 
 On the `wikitext-2-raw-v1` dataset, the quantised `GPT2-small` model achieves a 9% higher perplexity (worse) than the non-quantised model.
