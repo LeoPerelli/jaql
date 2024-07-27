@@ -32,12 +32,13 @@ The chunk size is generally set to `32`, as in `LLama.cpp`.
 The inference speed is slightly slower (20%) with respect to a non-quantised model.
 I suspect this is mostly due to how weights are quantised, as PyTorch doesn't easily accept converting parameters of the state dict to `int8`.
 This required re-allocating substantially more tensors, which slows down the de-quantisation hooks.
-Some metrics from LLama quantisation types: https://www.reddit.com/r/LocalLLaMA/comments/142q5k5/updated_relative_comparison_of_ggml_quantization/.
 
 To evaluate the model degradation I follow `LLama.cpp` in computing perplexity change. 
 On the `wikitext-2-raw-v1` dataset, the quantised `GPT2-small` model achieves a 9% higher perplexity (worse) than the non-quantised model.
 Even though this is computed using the official implementation in HuggingFace `evaluate`, the perplexity values are much higher (~6x) than the ones reported in the GPT2 paper, even for the non-quantised version.
 This implies that perplexity was likely measured with a different procedure, likely involving some additional filtering on the dataset, and this might over/under estimate the perplexity degradation.
+Some metrics from LLama quantisation types: https://www.reddit.com/r/LocalLLaMA/comments/142q5k5/updated_relative_comparison_of_ggml_quantization/.
+Info on the LLama K-quants: https://www.reddit.com/r/LocalLLaMA/comments/1dved4c/llamacpp_kquants/.
 
 # Known issues
 The only compatibility issue encountered is relative to models which have tied weights. 
